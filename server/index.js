@@ -1,0 +1,207 @@
+import express from 'express';
+import http from 'http';
+import crypto from 'crypto';
+import { WebSocketServer } from 'ws';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+const PORT = Number(process.env.PORT || 8787);
+const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
+const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
+const HOST_USER_ID = process.env.HOST_DISCORD_USER_ID || '';
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+
+const sessions = new Map(); // session -> user
+const instances = new Map(); // Discord activity instance -> state + sockets
+
+app.use(express.json({ limit: '16kb' }));
+
+function cookieValue(header, name) {
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return decodeURIComponent(v.join('='));
+  }
+  return null;
+}
+
+function signSession(token) {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(token).digest('hex');
+}
+
+function createSession(user) {
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, user);
+  return `${token}.${signSession(token)}`;
+}
+
+function getUserFromRequest(req) {
+  const raw = cookieValue(req.headers.cookie, 'mk_session');
+  if (!raw) return null;
+  const [token, sig] = raw.split('.');
+  if (!token || !sig) return null;
+  const expected = signSession(token);
+  if (sig.length !== expected.length) return null;
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  return sessions.get(token) || null;
+}
+
+function authRequired(req, res, next) {
+  const user = getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  req.user = user;
+  next();
+}
+
+app.post('/api/token', async (req, res) => {
+  if (!CLIENT_ID || !CLIENT_SECRET) return res.status(500).json({ error: 'Discord credentials are not configured on the server.' });
+  const { code } = req.body || {};
+  if (!code) return res.status(400).json({ error: 'Missing OAuth code.' });
+
+  const body = new URLSearchParams({
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: 'https://127.0.0.1/callback'
+  });
+
+  // The Embedded App SDK starter flow exchanges the authorization code on the server.
+  // Discord's Activity URL mapping normally proxies /api to this service; the redirect URI
+  // is not used by the Activity browser itself after the SDK hands us the code.
+  const tokenResp = await fetch('https://discord.com/api/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body
+  });
+  const token = await tokenResp.json();
+  if (!tokenResp.ok) return res.status(400).json({ error: token.error_description || 'Discord token exchange failed.' });
+
+  const userResp = await fetch('https://discord.com/api/users/@me', {
+    headers: { Authorization: `Bearer ${token.access_token}` }
+  });
+  const user = await userResp.json();
+  if (!userResp.ok) return res.status(400).json({ error: 'Could not read Discord user.' });
+
+  const sessionCookie = createSession({
+    id: user.id,
+    username: user.username,
+    global_name: user.global_name || user.username,
+  });
+  res.setHeader('Set-Cookie', `mk_session=${encodeURIComponent(sessionCookie)}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=86400`);
+  res.json({ access_token: token.access_token });
+});
+
+app.get('/api/me', authRequired, (req, res) => {
+  res.json({
+    user: req.user,
+    isHost: req.user.id === HOST_USER_ID,
+  });
+});
+
+function getState(instanceId) {
+  if (!instances.has(instanceId)) {
+    instances.set(instanceId, { challenge: '', running: false, startedAt: null, clients: new Set() });
+  }
+  return instances.get(instanceId);
+}
+
+function broadcast(instanceId, payload) {
+  const state = getState(instanceId);
+  const data = JSON.stringify(payload);
+  for (const ws of state.clients) if (ws.readyState === 1) ws.send(data);
+}
+
+function publicState(state) {
+  return { type: 'state', challenge: state.challenge, running: state.running, startedAt: state.startedAt };
+}
+
+wss.on('connection', (ws, req) => {
+  const user = getUserFromRequest(req);
+  const url = new URL(req.url, 'http://localhost');
+  const instanceId = url.searchParams.get('instance');
+  if (!user || !instanceId) return ws.close(1008, 'Unauthorized');
+
+  const state = getState(instanceId);
+  ws.user = user;
+  ws.instanceId = instanceId;
+  state.clients.add(ws);
+  ws.send(JSON.stringify(publicState(state)));
+
+  ws.on('message', raw => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+    const current = getState(instanceId);
+
+    if (msg.type === 'sync') {
+      ws.send(JSON.stringify(publicState(current)));
+      return;
+    }
+
+    const isHost = user.id === HOST_USER_ID;
+    if (msg.type === 'setChallenge') {
+      if (!isHost) return;
+      const challenge = String(msg.challenge || '').trim().slice(0, 5000);
+      if (!challenge) return;
+      current.challenge = challenge;
+      current.running = false;
+      current.startedAt = null;
+      broadcast(instanceId, publicState(current));
+      return;
+    }
+
+    if (msg.type === 'start') {
+      if (!isHost || !current.challenge) return;
+      current.running = true;
+      current.startedAt = Date.now();
+      broadcast(instanceId, publicState(current));
+      return;
+    }
+
+    if (msg.type === 'reset') {
+      if (!isHost) return;
+      current.challenge = '';
+      current.running = false;
+      current.startedAt = null;
+      broadcast(instanceId, publicState(current));
+      return;
+    }
+
+    if (msg.type === 'result') {
+      // Results are accepted only from authenticated participants. They are sent to the host,
+      // not treated as a command that can change the shared challenge.
+      const result = msg.result || {};
+      const clean = {
+        username: user.global_name || user.username,
+        wpm: Number(result.wpm) || 0,
+        accuracy: Number(result.accuracy) || 0,
+        errors: Number(result.errors) || 0,
+      };
+      for (const client of current.clients) {
+        if (client.readyState === 1 && client.user?.id === HOST_USER_ID) {
+          client.send(JSON.stringify({ type: 'result', result: clean }));
+        }
+      }
+    }
+  });
+
+  ws.on('close', () => state.clients.delete(ws));
+});
+
+// In production, serve the Vite build from ../dist.
+const dist = path.resolve(__dirname, '../dist');
+if (fs.existsSync(dist)) {
+  app.use(express.static(dist));
+  app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
+}
+
+server.listen(PORT, () => {
+  console.log(`MK TTV Discord Activity server listening on ${PORT}`);
+  if (!HOST_USER_ID) console.warn('WARNING: HOST_DISCORD_USER_ID is not set; nobody can use host controls.');
+});

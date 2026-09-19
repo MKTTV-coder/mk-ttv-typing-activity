@@ -1,0 +1,20 @@
+{
+  "name": "mk-discord-typing-activity",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"vite --config client/vite.config.js --host 0.0.0.0 --port 5173\" \"node server/index.js\"",
+    "build": "vite build --config client/vite.config.js",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "@discord/embedded-app-sdk": "^2.5.0",
+    "express": "^5.1.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.1.0",
+    "concurrently": "^9.1.2",
+    "vite": "^7.1.3"
+  }
+}
