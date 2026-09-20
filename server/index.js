@@ -198,7 +198,7 @@ wss.on('connection', (ws, req) => {
 const dist = path.resolve(__dirname, '../dist');
 if (fs.existsSync(dist)) {
   app.use(express.static(dist));
-  app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
+  app.get('/{*splat}', (req, res) => res.sendFile(path.join(dist, 'index.html')));
 }
 
 server.listen(PORT, () => {
