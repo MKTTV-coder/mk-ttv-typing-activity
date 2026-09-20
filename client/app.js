@@ -27,11 +27,8 @@ const copyBtn = $('copyBtn');
 const counter = $('counter');
 const results = $('results');
 
-function setStatus(text) { statusText.textContent = text; }
-function updateCounter() {
-  const n = typingBox.value.length;
-  counter.textContent = `${n} ${n === 1 ? 'character' : 'characters'}`;
-}
+
+
 
 function showResult(result) {
   results.hidden = false;
@@ -41,15 +38,12 @@ function showResult(result) {
 function renderChallenge() {
   challengeText.textContent = state.challenge || 'Waiting for the host to post a password…';
   if (state.running && state.challenge) {
-    typingBox.disabled = false;
-    typingBox.placeholder = 'Type the password exactly as shown above…';
-    typingBox.focus();
-    setStatus('TEST LIVE — type the password as fast and accurately as you can.');
-  } else {
-    typingBox.disabled = true;
-    typingBox.placeholder = state.challenge ? 'Waiting for the host to start…' : 'The host has not posted a password yet…';
-  }
-  startBtn.disabled = !state.challenge;
+  setStatus('PASSWORD POSTED — click COPY PASSWORD to copy it.');
+} else {
+  setStatus(state.challenge ? 'Password posted — waiting to start.' : 'The host has not posted a password yet.');
+}
+  
+ 
 }
 
 async function setupDiscord() {
@@ -134,12 +128,7 @@ resetBtn.addEventListener('click', () => {
   send({ type: 'reset' });
 });
 
-clearBtn.addEventListener('click', () => {
-  typingBox.value = '';
-  results.hidden = true;
-  updateCounter();
-  if (!typingBox.disabled) typingBox.focus();
-});
+
 
 copyBtn.addEventListener('click', async () => {
   if (!state.challenge) return;
@@ -148,27 +137,10 @@ copyBtn.addEventListener('click', async () => {
   setTimeout(() => copyBtn.textContent = 'COPY PASSWORD', 1100);
 });
 
-typingBox.addEventListener('input', updateCounter);
-typingBox.addEventListener('input', () => {
-  if (!state.running || !state.challenge) return;
-  if (typingBox.value.length >= state.challenge.length) finishTest();
-});
 
-function finishTest() {
-  const elapsed = Math.max((Date.now() - state.startedAt) / 1000, 0.01);
-  const typed = typingBox.value;
-  let errors = Math.abs(typed.length - state.challenge.length);
-  const min = Math.min(typed.length, state.challenge.length);
-  for (let i = 0; i < min; i++) if (typed[i] !== state.challenge[i]) errors++;
-  const correctChars = Math.max(state.challenge.length - errors, 0);
-  const wpm = Math.max(0, Math.round((correctChars / 5) / (elapsed / 60)));
-  const accuracy = Math.max(0, Math.round((correctChars / Math.max(state.challenge.length, 1)) * 100));
-  showResult({ wpm, accuracy, errors });
-  send({ type: 'result', result: { wpm, accuracy, errors } });
-  typingBox.disabled = true;
-}
 
-updateCounter();
+
+
 setupDiscord().catch(err => {
   console.error(err);
   setStatus(`Activity setup failed: ${err.message}`);
