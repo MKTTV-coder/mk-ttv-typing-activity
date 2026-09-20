@@ -39,6 +39,8 @@ function renderChallenge() {
 }
 
 async function setupDiscord() {
+  setStatus('Connecting to Discord...');
+
   await discordSdk.ready();
 
   state.instanceId = discordSdk.instanceId;
@@ -51,27 +53,35 @@ async function setupDiscord() {
     scope: ['identify'],
   });
 
-  const response = await fetch('/api/token', {
+  const tokenResponse = await fetch('/api/token', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({ code }),
   });
 
-  if (!response.ok) {
-    throw new Error('Discord login failed');
+  if (!tokenResponse.ok) {
+    throw new Error('Failed to exchange Discord authorization code.');
   }
 
-  const { access_token } = await response.json();
+  const tokenData = await tokenResponse.json();
 
   state.auth = await discordSdk.commands.authenticate({
-    access_token,
+    access_token: tokenData.access_token,
   });
 
-  if (!state.auth?.user?.id) {
-    throw new Error('Discord authentication failed');
+  const meResponse = await fetch('/api/me', {
+    headers: {
+      Authorization: `Bearer ${tokenData.access_token}`,
+    },
+  });
+
+  if (!meResponse.ok) {
+    throw new Error('Failed to load user information.');
   }
 
-  const me = await fetch('/api/me').then((r) => r.json());
+  const me = await meResponse.json();
 
   state.isHost = !!me.isHost;
   hostPanel.hidden = !state.isHost;
@@ -81,15 +91,15 @@ async function setupDiscord() {
 }
 
 function connectSocket() {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url =
-    `${protocol}//${location.host}/ws?instance=` +
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl =
+    `${protocol}//${window.location.host}/ws?instance=` +
     encodeURIComponent(state.instanceId);
 
-  state.socket = new WebSocket(url);
+  state.socket = new WebSocket(wsUrl);
 
   state.socket.addEventListener('open', () => {
-    state.socket.send(JSON.stringify({ type: 'sync' }));
+    send({ type: 'sync' });
   });
 
   state.socket.addEventListener('message', (event) => {
@@ -102,7 +112,7 @@ function connectSocket() {
   });
 
   state.socket.addEventListener('close', () => {
-    setStatus('Connection lost — reconnecting...');
+    setStatus('Disconnected from the server. Please reopen the Activity.');
   });
 
   state.socket.addEventListener('error', () => {
@@ -110,9 +120,9 @@ function connectSocket() {
   });
 }
 
-function send(msg) {
-  if (state.socket?.readyState === WebSocket.OPEN) {
-    state.socket.send(JSON.stringify(msg));
+function send(message) {
+  if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+    state.socket.send(JSON.stringify(message));
   }
 }
 
@@ -132,7 +142,9 @@ postBtn.addEventListener('click', () => {
 resetBtn.addEventListener('click', () => {
   if (!state.isHost) return;
 
-  send({ type: 'reset' });
+  send({
+    type: 'reset',
+  });
 });
 
 copyBtn.addEventListener('click', async () => {
@@ -149,7 +161,7 @@ copyBtn.addEventListener('click', async () => {
   }, 1100);
 });
 
-setupDiscord().catch((err) => {
-  console.error(err);
-  setStatus(`Activity setup failed: ${err.message}`);
+setupDiscord().catch((error) => {
+  console.error(error);
+  setStatus('Failed to connect to Discord.');
 });
