@@ -5,6 +5,11 @@ import { WebSocketServer } from 'ws';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  InteractionType,
+  InteractionResponseType,
+  verifyKeyMiddleware,
+} from 'discord-interactions';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -15,11 +20,33 @@ const PORT = Number(process.env.PORT || 8787);
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
 const HOST_USER_ID = process.env.HOST_DISCORD_USER_ID || '';
+const DISCORD_PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY || '';
+const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID || '';
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 
 const sessions = new Map(); // session -> user
 const instances = new Map(); // Discord activity instance -> state + sockets
+app.post(
+  '/api/discord/interactions',
+  verifyKeyMiddleware(DISCORD_PUBLIC_KEY),
+  (req, res) => {
+    const interaction = req.body;
 
+    if (
+      interaction.type === InteractionType.APPLICATION_COMMAND &&
+      interaction.data?.name === 'password'
+    ) {
+      return res.json({
+        type: InteractionResponseType.LAUNCH_ACTIVITY,
+      });
+    }
+
+    return res.status(400).json({
+      error: 'Unknown interaction',
+    });
+  }
+);
 app.use(express.json({ limit: '16kb' }));
 
 function cookieValue(header, name) {
