@@ -332,5 +332,14 @@ if (fs.existsSync(dist)) {
 
 server.listen(PORT, () => {
   console.log(`MK TTV Discord Activity server listening on ${PORT}`);
-  if (!HOST_USER_ID) console.warn('WARNING: HOST_DISCORD_USER_ID is not set; nobody can use host controls.');
+
+  if (!HOST_USER_ID) {
+    console.warn(
+      'WARNING: HOST_DISCORD_USER_ID is not set; nobody can use host controls.'
+    );
+  }
+
+  registerPasswordCommand().catch((error) => {
+    console.error('Discord command registration failed:', error);
+  });
 });
