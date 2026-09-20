@@ -150,11 +150,35 @@ resetBtn.addEventListener('click', () => {
 copyBtn.addEventListener('click', async () => {
   if (!state.challenge) return;
 
+  let copied = false;
+
   try {
-    await navigator.clipboard.writeText(state.challenge);
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(state.challenge);
+      copied = true;
+    }
   } catch {}
 
-  copyBtn.textContent = 'COPIED!';
+  if (!copied) {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = state.challenge;
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '0';
+      textarea.setAttribute('readonly', '');
+      document.body.appendChild(textarea);
+
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+
+      copied = document.execCommand('copy');
+      textarea.remove();
+    } catch {}
+  }
+
+  copyBtn.textContent = copied ? 'COPIED!' : 'COPY FAILED';
 
   setTimeout(() => {
     copyBtn.textContent = 'COPY PASSWORD';
