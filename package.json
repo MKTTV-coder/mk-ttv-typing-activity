@@ -10,7 +10,8 @@
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.5.0",
     "express": "^5.1.0",
-    "ws": "^8.18.3"
+   "ws": "^8.18.3",
+"discord-interactions": "^4.4.0"
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^2.1.0",
