@@ -233,10 +233,10 @@
 
     <div class="host-panel" id="hostPanel" hidden>
       <div class="host-label">HOST CONTROLS — ONLY YOU CAN CHANGE THE PASSWORD</div>
-      <textarea id="hostText" spellcheck="false" placeholder="Enter the password/text everyone should type…"></textarea>
+      <textarea id="hostText" spellcheck="false" placeholder="Enter the password to post…"></textarea>
       <div class="controls">
         <button type="button" id="postBtn">POST PASSWORD</button>
-        <button type="button" id="startBtn">START TEST</button>
+       
         <button type="button" id="resetBtn">RESET</button>
       </div>
     </div>
@@ -246,16 +246,13 @@
       <div class="challenge-text" id="challengeText">Waiting for the host to post a password…</div>
     </div>
 
-    <div class="input-wrap">
-      <textarea id="typingBox" spellcheck="false" disabled placeholder="The host has not started the test yet…"></textarea>
-    </div>
+
 
     <div class="controls">
-      <button type="button" id="clearBtn">CLEAR MY ENTRY</button>
+      
       <button type="button" id="copyBtn">COPY PASSWORD</button>
     </div>
-    <div class="counter" id="counter">0 characters</div>
-    <div class="results" id="results" hidden></div>
+    
   </section>
 </div>
 <script type="module" src="/app.js"></script>
