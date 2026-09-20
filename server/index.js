@@ -100,35 +100,7 @@ async function registerPasswordCommand() {
   console.log(`Discord /password command ready: ${command.id}`);
 }
 
-  const url =
-    `https://discord.com/api/v10/applications/${CLIENT_ID}` +
-    `/guilds/${DISCORD_GUILD_ID}/commands`;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      name: 'password',
-      type: 1,
-      description: 'Open the password Activity',
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(
-      `Failed to register /password (${response.status}):`,
-      errorText
-    );
-    return;
-  }
-
-  const command = await response.json();
-  console.log(`Registered /password command: ${command.id}`);
-}
 app.post(
   '/api/discord/interactions',
   verifyKeyMiddleware(DISCORD_PUBLIC_KEY),
