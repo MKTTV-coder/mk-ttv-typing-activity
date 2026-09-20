@@ -27,6 +27,108 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toSt
 
 const sessions = new Map(); // session -> user
 const instances = new Map(); // Discord activity instance -> state + sockets
+async function registerPasswordCommand() {
+  if (!CLIENT_ID || !DISCORD_GUILD_ID || !DISCORD_BOT_TOKEN) {
+    console.warn(
+      'Discord command registration skipped: missing environment variables.'
+    );
+    return;
+  }
+
+  const baseUrl =
+    `https://discord.com/api/v10/applications/${CLIENT_ID}` +
+    `/guilds/${DISCORD_GUILD_ID}/commands`;
+
+  const headers = {
+    Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+    'Content-Type': 'application/json',
+  };
+
+  const listResponse = await fetch(baseUrl, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!listResponse.ok) {
+    const errorText = await listResponse.text();
+    console.error(
+      `Failed to check Discord commands (${listResponse.status}):`,
+      errorText
+    );
+    return;
+  }
+
+  const commands = await listResponse.json();
+
+  const existingCommand = commands.find(
+    (command) => command.name === 'password' && command.type === 1
+  );
+
+  const commandData = {
+    name: 'password',
+    type: 1,
+    description: 'Open the password Activity',
+  };
+
+  let response;
+
+  if (existingCommand) {
+    response = await fetch(`${baseUrl}/${existingCommand.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(commandData),
+    });
+  } else {
+    response = await fetch(baseUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(commandData),
+    });
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(
+      `Failed to register /password (${response.status}):`,
+      errorText
+    );
+    return;
+  }
+
+  const command = await response.json();
+
+  console.log(`Discord /password command ready: ${command.id}`);
+}
+
+  const url =
+    `https://discord.com/api/v10/applications/${CLIENT_ID}` +
+    `/guilds/${DISCORD_GUILD_ID}/commands`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: 'password',
+      type: 1,
+      description: 'Open the password Activity',
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(
+      `Failed to register /password (${response.status}):`,
+      errorText
+    );
+    return;
+  }
+
+  const command = await response.json();
+  console.log(`Registered /password command: ${command.id}`);
+}
 app.post(
   '/api/discord/interactions',
   verifyKeyMiddleware(DISCORD_PUBLIC_KEY),
