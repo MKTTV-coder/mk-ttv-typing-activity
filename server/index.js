@@ -24,7 +24,37 @@ const DISCORD_PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY || '';
 const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID || '';
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || '';
+async function supabaseRequest(path, options = {}) {
+  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+    throw new Error('Supabase is not configured.');
+  }
 
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/${path}`,
+    {
+      ...options,
+      headers: {
+        apikey: SUPABASE_SECRET_KEY,
+        Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Supabase ${response.status}: ${text}`);
+  }
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  return response.json();
+}
 const sessions = new Map(); // session -> user
 const instances = new Map(); // Discord activity instance -> state + sockets
 async function registerPasswordCommand() {
@@ -122,7 +152,42 @@ app.post(
   }
 );
 app.use(express.json({ limit: '16kb' }));
+async function savePassword(password) {
+  const rows = await supabaseRequest('passwords', {
+    method: 'POST',
+    headers: {
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({
+      password,
+    }),
+  });
 
+  return rows[0] || null;
+}
+
+async function getLatestPassword() {
+  const rows = await supabaseRequest(
+    'passwords?select=id,password,created_at&order=created_at.desc&limit=1'
+  );
+
+  return rows[0] || null;
+}
+
+async function getSavedPasswords() {
+  return supabaseRequest(
+    'passwords?select=id,password,created_at&order=created_at.desc&limit=50'
+  );
+}
+
+async function deletePassword(id) {
+  await supabaseRequest(
+    `passwords?id=eq.${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+    }
+  );
+}
 function cookieValue(header, name) {
   if (!header) return null;
   for (const part of header.split(';')) {
@@ -159,7 +224,33 @@ function authRequired(req, res, next) {
   req.user = user;
   next();
 }
+app.get('/api/passwords', authRequired, async (req, res) => {
+  if (req.user.id !== HOST_USER_ID) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
 
+  try {
+    const passwords = await getSavedPasswords();
+    return res.json(passwords);
+  } catch (error) {
+    console.error('Failed to load saved passwords:', error);
+    return res.status(500).json({ error: 'Failed to load passwords' });
+  }
+});
+
+app.delete('/api/passwords/:id', authRequired, async (req, res) => {
+  if (req.user.id !== HOST_USER_ID) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    await deletePassword(req.params.id);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Failed to delete password:', error);
+    return res.status(500).json({ error: 'Failed to delete password' });
+  }
+});
 app.post('/api/token', async (req, res) => {
   if (!CLIENT_ID || !CLIENT_SECRET) return res.status(500).json({ error: 'Discord credentials are not configured on the server.' });
   const { code } = req.body || {};
@@ -208,7 +299,13 @@ app.get('/api/me', authRequired, (req, res) => {
 
 function getState(instanceId) {
   if (!instances.has(instanceId)) {
-    instances.set(instanceId, { challenge: '', running: false, startedAt: null, clients: new Set() });
+    instances.set(instanceId, {
+  challenge: '',
+  passwordId: null,
+  running: false,
+  startedAt: null,
+  clients: new Set()
+});
   }
   return instances.get(instanceId);
 }
@@ -219,23 +316,46 @@ function broadcast(instanceId, payload) {
   for (const ws of state.clients) if (ws.readyState === 1) ws.send(data);
 }
 
-function publicState(state) {
-  return { type: 'state', challenge: state.challenge, running: state.running, startedAt: state.startedAt };
+
+  function publicState(state) {
+  return {
+    type: 'state',
+    challenge: state.challenge,
+    passwordId: state.passwordId,
+    running: state.running,
+    startedAt: state.startedAt
+  };
 }
 
-wss.on('connection', (ws, req) => {
+wss.on('connection', async (ws, req) => {
   const user = getUserFromRequest(req);
   const url = new URL(req.url, 'http://localhost');
   const instanceId = url.searchParams.get('instance');
   if (!user || !instanceId) return ws.close(1008, 'Unauthorized');
 
   const state = getState(instanceId);
-  ws.user = user;
+
+if (!state.challenge) {
+  try {
+    const latest = await getLatestPassword();
+
+    if (latest) {
+      state.challenge = latest.password;
+      state.passwordId = latest.id;
+      state.running = false;
+      state.startedAt = null;
+    }
+  } catch (error) {
+    console.error('Failed to load saved password:', error);
+  }
+}
+
+ws.user = user;
   ws.instanceId = instanceId;
   state.clients.add(ws);
   ws.send(JSON.stringify(publicState(state)));
 
-  ws.on('message', raw => {
+  ws.on('message', async raw => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     const current = getState(instanceId);
@@ -247,15 +367,26 @@ wss.on('connection', (ws, req) => {
 
     const isHost = user.id === HOST_USER_ID;
     if (msg.type === 'setChallenge') {
-      if (!isHost) return;
-      const challenge = String(msg.challenge || '').trim().slice(0, 5000);
-      if (!challenge) return;
-      current.challenge = challenge;
-      current.running = false;
-      current.startedAt = null;
-      broadcast(instanceId, publicState(current));
-      return;
-    }
+  if (!isHost) return;
+
+  const challenge = String(msg.challenge || '').trim().slice(0, 5000);
+  if (!challenge) return;
+
+  try {
+    const saved = await savePassword(challenge);
+
+    current.challenge = challenge;
+    current.passwordId = saved?.id || null;
+    current.running = false;
+    current.startedAt = null;
+
+    broadcast(instanceId, publicState(current));
+  } catch (error) {
+    console.error('Failed to save password:', error);
+  }
+
+  return;
+}
 
     if (msg.type === 'start') {
       if (!isHost || !current.challenge) return;
@@ -266,13 +397,25 @@ wss.on('connection', (ws, req) => {
     }
 
     if (msg.type === 'reset') {
-      if (!isHost) return;
-      current.challenge = '';
-      current.running = false;
-      current.startedAt = null;
-      broadcast(instanceId, publicState(current));
-      return;
+  if (!isHost) return;
+
+  try {
+    if (current.passwordId) {
+      await deletePassword(current.passwordId);
     }
+
+    current.challenge = '';
+    current.passwordId = null;
+    current.running = false;
+    current.startedAt = null;
+
+    broadcast(instanceId, publicState(current));
+  } catch (error) {
+    console.error('Failed to reset password:', error);
+  }
+
+  return;
+}
 
     if (msg.type === 'result') {
       // Results are accepted only from authenticated participants. They are sent to the host,
