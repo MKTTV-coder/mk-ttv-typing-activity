@@ -20,7 +20,115 @@ const postBtn = $('postBtn');
 const resetBtn = $('resetBtn');
 const challengeText = $('challengeText');
 const copyBtn = $('copyBtn');
+function setupPasswordHistory() {
+  if (!state.isHost || document.getElementById('savedPasswordsPanel')) {
+    return;
+  }
 
+  const panel = document.createElement('div');
+  panel.id = 'savedPasswordsPanel';
+  panel.style.marginTop = '18px';
+  panel.style.padding = '14px';
+  panel.style.border = '1px solid #39ff14';
+  panel.style.borderRadius = '10px';
+  panel.style.background = 'rgba(0, 0, 0, 0.55)';
+
+  const title = document.createElement('div');
+  title.textContent = 'SAVED PASSWORDS';
+  title.style.fontWeight = 'bold';
+  title.style.marginBottom = '10px';
+
+  const list = document.createElement('div');
+  list.id = 'passwordHistory';
+  list.textContent = 'Loading saved passwords...';
+
+  panel.appendChild(title);
+  panel.appendChild(list);
+  hostPanel.appendChild(panel);
+
+  loadPasswordHistory();
+}
+
+async function loadPasswordHistory() {
+  const list = document.getElementById('passwordHistory');
+  if (!list) return;
+
+  list.textContent = 'Loading saved passwords...';
+
+  try {
+    const response = await fetch('/api/passwords');
+
+    if (!response.ok) {
+      throw new Error('Failed to load saved passwords.');
+    }
+
+    const passwords = await response.json();
+
+    list.innerHTML = '';
+
+    if (!passwords.length) {
+      list.textContent = 'No saved passwords yet.';
+      return;
+    }
+
+    passwords.forEach((item, index) => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.gap = '10px';
+      row.style.marginBottom = '8px';
+
+      const text = document.createElement('div');
+      text.style.flex = '1';
+      text.style.wordBreak = 'break-word';
+
+      const password = document.createElement('div');
+      password.textContent = item.password;
+
+      const date = document.createElement('small');
+      date.textContent = new Date(item.created_at).toLocaleString();
+
+      text.appendChild(password);
+      text.appendChild(date);
+
+      row.appendChild(text);
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.textContent = index === 0 ? 'CURRENT' : 'DELETE';
+      deleteBtn.disabled = index === 0;
+
+      deleteBtn.addEventListener('click', async () => {
+        if (!confirm('Delete this saved password?')) return;
+
+        deleteBtn.disabled = true;
+
+        try {
+          const deleteResponse = await fetch(
+            `/api/passwords/${encodeURIComponent(item.id)}`,
+            { method: 'DELETE' }
+          );
+
+          if (!deleteResponse.ok) {
+            throw new Error('Delete failed.');
+          }
+
+          await loadPasswordHistory();
+        } catch (error) {
+          console.error(error);
+          deleteBtn.disabled = false;
+          alert('Failed to delete the password.');
+        }
+      });
+
+      row.appendChild(deleteBtn);
+      list.appendChild(row);
+    });
+  } catch (error) {
+    console.error(error);
+    list.textContent = 'Unable to load saved passwords.';
+  }
+}
 function setStatus(message) {
   statusText.textContent = message;
 }
@@ -84,7 +192,11 @@ async function setupDiscord() {
   const me = await meResponse.json();
 
   state.isHost = !!me.isHost;
-  hostPanel.hidden = !state.isHost;
+hostPanel.hidden = !state.isHost;
+
+if (state.isHost) {
+  setupPasswordHistory();
+}
 
   renderChallenge();
   connectSocket();
