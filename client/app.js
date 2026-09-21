@@ -99,9 +99,7 @@ async function loadPasswordHistory() {
       deleteBtn.disabled = index === 0;
 
       deleteBtn.addEventListener('click', async () => {
-        if (!confirm('Delete this saved password?')) return;
-
-        deleteBtn.disabled = true;
+  deleteBtn.disabled = true;
 
         try {
           const deleteResponse = await fetch(
