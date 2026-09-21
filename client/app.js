@@ -242,13 +242,13 @@ postBtn.addEventListener('click', () => {
   if (!state.isHost) return;
 
   const text = hostText.value.trim();
-
   if (!text) return;
 
-  send({
-    type: 'setChallenge',
-    challenge: text,
-  });
+  send({ type: 'setChallenge', challenge: text });
+
+  setTimeout(() => {
+    loadPasswordHistory();
+  }, 500);
 });
 
 resetBtn.addEventListener('click', () => {
